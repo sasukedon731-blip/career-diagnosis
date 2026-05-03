@@ -16,22 +16,38 @@ type RequestBody = {
   analysis?: Record<string, unknown>
 }
 
-const fallbackComment: AiComment = {
-  empathy:
-    'ここまでの回答を見ると、今すぐ仕事を決めたいだけでなく、将来の生活を安定させたい気持ちが強く出ています。',
-  insight:
-    '診断結果では、希望と現実の間にギャップがあります。今は求人名だけで選ぶより、収入・経験・地域・性格の相性を分けて考える段階です。',
-  nextAction:
-    'まずは希望職種に近づくために、3ヶ月以内に始められる入口職種と、1年後に収入を伸ばせるルートを比較しましょう。',
+function text(value: unknown, fallback = '') {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
 
-function safeText(value: unknown, max = 600) {
-  return typeof value === 'string' ? value.slice(0, max) : ''
+function num(value: unknown, fallback = 0) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function toAiComment(value: unknown): AiComment | null {
+function makeFallbackComment(body: RequestBody): AiComment {
+  const user = body.user ?? {}
+  const result = body.result ?? {}
+  const topJob = body.topJob ?? {}
+
+  const reason = text(body.reason ?? user.reason, '将来をよくしたい')
+  const strength = text(body.strength ?? user.strength, 'これまでの経験や強み')
+  const dreamJob = text(user.dreamJob ?? result.dreamRecommendedJob, '希望の仕事')
+  const region = text(user.region, '希望地域')
+  const achievementRate = num(result.achievementRate ?? result.matchPercent, 0)
+  const currentIncome = num(result.currentIncome, 0)
+  const targetIncome = num(result.targetIncome, 0)
+  const incomeGap = targetIncome - currentIncome
+  const jobTitle = text(topJob.title, dreamJob)
+
+  return {
+    empathy: `「${reason}」という理由を見ると、ただ仕事を探しているだけではなく、生活や将来の安心感まで考えていることが伝わります。`,
+    insight: `${region}で${dreamJob}を目指す場合、現在の想定年収${currentIncome.toLocaleString()}円に対して目標は${targetIncome.toLocaleString()}円です。差額は約${incomeGap.toLocaleString()}円、達成率は${achievementRate}%なので、今はルート設計が重要です。`,
+    nextAction: `まず3ヶ月は「${strength}」を活かせる入口として${jobTitle}に近い仕事を比較し、半年以内に必要資格・経験・年収アップ条件を整理しましょう。`,
+  }
+}
+
+function parseAiComment(value: unknown): AiComment | null {
   if (!value || typeof value !== 'object') return null
-
   const obj = value as Partial<AiComment>
 
   if (
@@ -49,27 +65,46 @@ function toAiComment(value: unknown): AiComment | null {
   }
 }
 
+function getOutputText(data: any) {
+  if (typeof data.output_text === 'string') return data.output_text
+
+  const textParts: string[] = []
+
+  for (const item of data.output ?? []) {
+    for (const content of item.content ?? []) {
+      if (typeof content.text === 'string') {
+        textParts.push(content.text)
+      }
+    }
+  }
+
+  return textParts.join('\n')
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as RequestBody
     const apiKey = process.env.OPENAI_API_KEY
 
+    const fallbackComment = makeFallbackComment(body)
+
     const payloadForPrompt = {
-      freeInput: {
-        reason: safeText(body.reason ?? body.user?.reason),
-        strength: safeText(body.strength ?? body.user?.strength),
-      },
       user: body.user ?? {},
       result: body.result ?? {},
       topJob: body.topJob ?? {},
       analysis: body.analysis ?? {},
       answers: body.answers ?? {},
+      freeInput: {
+        reason: body.reason ?? body.user?.reason ?? '',
+        experienceQualificationStrength:
+          body.strength ?? body.user?.strength ?? '',
+      },
     }
 
     if (!apiKey) {
       return NextResponse.json({
         comment: fallbackComment,
-        source: 'fallback',
+        source: 'fallback_no_api_key',
       })
     }
 
@@ -91,36 +126,28 @@ export async function POST(request: Request) {
 ユーザーの夢・生活・収入目標に近づくための現実的なルートを提示してください。
 
 【絶対ルール】
+・毎回違う言い回しにする
+・「ここまでの回答を見ると」で始めることは禁止
+・「今すぐ仕事を決めたいだけでなく」は禁止
 ・抽象的な励ましだけで終わらない
-・ユーザーの自由入力「reason」「strength」を必ず反映する
+・ユーザーの自由入力 reason と strength を必ず反映する
+・strength には経験、資格、得意なことが混ざる前提で読む
 ・数値がある場合は必ず使う
 ・年収差、達成率、性格スコア、地域、経験、希望職種を材料にする
 ・期間を入れる
 ・押し売りは禁止
 ・厳しい現実もやさしく伝える
 ・日本語で返す
-・同じ言い回しを避ける
 
-【出力方針】
-empathy：
-ユーザーの背景・希望・不安に寄り添う。
-ただし「頑張っていますね」だけは禁止。
-
-insight：
-診断データから見える現状・問題・ギャップをコンサル目線で分析する。
-数値があれば必ず入れる。
-
-nextAction：
-次に取るべき行動を具体化する。
-「まずは求人を見ましょう」だけは禁止。
-3ヶ月、半年、1年など期間を入れる。
+【返却ルール】
+JSONのみ返す。
+empathy / insight / nextAction の3項目だけ。
             `.trim(),
           },
           {
             role: 'user',
             content:
-              '以下の診断データをもとに、ユーザー向けのAIコメントを作成してください。\n' +
-              '返却は JSON の empathy / insight / nextAction の3項目だけです。\n\n' +
+              '以下の診断データをもとに、ユーザー向けのAIコメントを作成してください。\n\n' +
               JSON.stringify(payloadForPrompt, null, 2),
           },
         ],
@@ -137,17 +164,17 @@ nextAction：
                 empathy: {
                   type: 'string',
                   description:
-                    'ユーザーの希望・理由・強みに寄り添うコメント。120文字以内。',
+                    'ユーザーの理由・希望・経験・資格・強みに寄り添うコメント。100〜160文字。',
                 },
                 insight: {
                   type: 'string',
                   description:
-                    '診断結果、数値、収入差、性格スコア、求人情報から見える分析。180文字以内。',
+                    '診断結果、数値、収入差、性格スコア、求人情報から見える分析。140〜220文字。',
                 },
                 nextAction: {
                   type: 'string',
                   description:
-                    '3ヶ月〜1年単位で次にやるべき具体行動。180文字以内。',
+                    '3ヶ月〜1年単位で次にやるべき具体行動。140〜220文字。',
                 },
               },
             },
@@ -162,33 +189,45 @@ nextAction：
 
       return NextResponse.json({
         comment: fallbackComment,
-        source: 'fallback',
+        source: 'fallback_openai_error',
       })
     }
 
     const data = await response.json()
-    const outputText =
-      typeof data.output_text === 'string' ? data.output_text : ''
+    const outputText = getOutputText(data)
 
     if (!outputText) {
       return NextResponse.json({
         comment: fallbackComment,
-        source: 'fallback',
+        source: 'fallback_empty_output',
       })
     }
 
-    const parsed = toAiComment(JSON.parse(outputText))
+    let parsed: AiComment | null = null
+
+    try {
+      parsed = parseAiComment(JSON.parse(outputText))
+    } catch (error) {
+      console.error('AI JSON parse error:', error, outputText)
+    }
 
     return NextResponse.json({
       comment: parsed ?? fallbackComment,
-      source: parsed ? 'openai' : 'fallback',
+      source: parsed ? 'openai' : 'fallback_parse_error',
     })
   } catch (error) {
     console.error(error)
 
     return NextResponse.json({
-      comment: fallbackComment,
-      source: 'fallback',
+      comment: {
+        empathy:
+          '入力内容から、今後の働き方を真剣に考えていることが伝わります。',
+        insight:
+          '診断結果の一部をうまく読み取れませんでしたが、希望職種・収入・強みを分けて整理することが重要です。',
+        nextAction:
+          'まずは3ヶ月以内に、希望職種に必要な経験・資格・収入条件を確認しましょう。',
+      },
+      source: 'fallback_server_error',
     })
   }
 }
