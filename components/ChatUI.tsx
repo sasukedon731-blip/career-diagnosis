@@ -45,7 +45,7 @@ const steps: Step[] = [
     type: 'choice',
     key: 'purpose',
     question: '働く上で一番大事にしたいのはどれですか？',
-    options: ['私生活重視', '収入重視', '安定重視', 'スキル重視', '未定'],
+    options: ['私生活重視', '収入重視', '安定重視', 'スキル重視'],
   },
   {
     type: 'text',
@@ -220,6 +220,7 @@ export default function ChatUI() {
   const [aiComment, setAiComment] = useState<AiComment | null>(null)
   const [aiCommentLoading, setAiCommentLoading] = useState(false)
   const [aiCommentError, setAiCommentError] = useState('')
+  const [isStarted, setIsStarted] = useState(false)
 
   const bottomRef = useRef<HTMLDivElement | null>(null)
   const resultSectionRef = useRef<HTMLElement | null>(null)
@@ -570,7 +571,58 @@ export default function ChatUI() {
   if (loading) {
     return <main style={{ padding: 24 }}>読み込み中...</main>
   }
+if (!isStarted) {
+  return (
+    <main
+      style={{
+        minHeight: '100vh',
+        background: '#e5ddd5',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 480,
+          background: '#fff',
+          borderRadius: 20,
+          padding: 24,
+          textAlign: 'center',
+          boxShadow: '0 0 24px rgba(0,0,0,0.1)',
+        }}
+      >
+        <h1 style={{ fontSize: 24, fontWeight: 900, marginBottom: 12 }}>
+          キャリア診断AI
+        </h1>
 
+        <p style={{ lineHeight: 1.7, marginBottom: 20 }}>
+          あなたの性格・希望・生活条件から、
+          <br />
+          「夢に近づく現実的なルート」を提案します。
+        </p>
+
+        <button
+          onClick={() => setIsStarted(true)}
+          style={{
+            width: '100%',
+            padding: '14px',
+            borderRadius: 14,
+            border: 'none',
+            background: '#06c755',
+            color: '#fff',
+            fontWeight: 800,
+            fontSize: 16,
+            cursor: 'pointer',
+          }}
+        >
+          診断をはじめる
+        </button>
+      </div>
+    </main>
+  )
+}
   return (
     <main
       style={{
