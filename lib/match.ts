@@ -5,137 +5,270 @@ export type DiagnosisUser = {
   change: number
   attention: number
   communication: number
-  recommendedJob?: string
+  recommendedJob: string
   personalityRecommendedJob?: string
   dreamRecommendedJob?: string
-  recommendationGap?: boolean
-  careerRouteType?: "same" | "step_up" | "challenge" | "rebuild"
   region?: string
   experience?: string
   age?: string
 }
 
-export type CareerRoute = "stable" | "career_up" | "balance"
+export type JobRoute = "stable" | "career_up" | "balance"
 
 export type RecommendedJob = PublicJobPosting & {
-  matchScore: number
   matchPercent: number
-  route: CareerRoute
-  routeLabel: string
   reason: string
+  route: JobRoute
   positionLabel: string
   isDreamPick: boolean
-  isPersonalityPick: boolean
+}
+
+type MatchableJob = PublicJobPosting & {
+  routine_level?: number
+  change_level?: number
+  attention_level?: number
+  communication_level?: number
+  difficulty?: number
+  growth?: number
+  route?: JobRoute | string
+  description?: string
+  growth_route?: string | null
+  salary_year_1?: number | null
+  salary_year_3?: number | null
+  salary_year_5?: number | null
+  required_step?: string | null
+  fit_person?: string | null
+}
+
+function clamp(value: number, min = 0, max = 100) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function toLevel(value: unknown, fallback = 3) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(1, Math.min(5, n))
+}
+
+function levelToScore(level: unknown) {
+  return toLevel(level) * 20
+}
+
+function textIncludes(text: string | null | undefined, keyword: string | undefined) {
+  if (!text || !keyword || keyword === "未定") return false
+  return text.includes(keyword)
+}
+
+function normalizeRoute(value: unknown): JobRoute {
+  const v = String(value ?? "")
+
+  if (v === "stable" || v.includes("安定")) return "stable"
+  if (v === "career_up" || v.includes("収入") || v.includes("挑戦") || v.includes("成長") || v.includes("将来")) {
+    return "career_up"
+  }
+
+  return "balance"
 }
 
 function getDreamJob(user: DiagnosisUser) {
-  return (user.dreamRecommendedJob || user.recommendedJob || "未定").trim()
+  return user.dreamRecommendedJob || user.recommendedJob || "未定"
 }
 
 function getPersonalityJob(user: DiagnosisUser) {
-  return (user.personalityRecommendedJob || user.recommendedJob || "未定").trim()
+  return user.personalityRecommendedJob || user.recommendedJob || "未定"
 }
 
-function getRoute(job: PublicJobPosting): CareerRoute {
-  if (job.hiring_category === "施工管理" || job.hiring_category === "保守メンテ") return "career_up"
-  if (job.hiring_category === "事務") return "balance"
-  return "stable"
+function calcPersonalityScore(job: MatchableJob, user: DiagnosisUser) {
+  const routineTarget = levelToScore(job.routine_level)
+  const changeTarget = levelToScore(job.change_level)
+  const attentionTarget = levelToScore(job.attention_level)
+  const communicationTarget = levelToScore(job.communication_level)
+
+  const continuityScore = 100 - Math.abs(routineTarget - user.continuity)
+  const changeScore = 100 - Math.abs(changeTarget - user.change)
+  const attentionScore = 100 - Math.abs(attentionTarget - user.attention)
+  const communicationScore = 100 - Math.abs(communicationTarget - user.communication)
+
+  return clamp(
+    continuityScore * 0.3 +
+      changeScore * 0.25 +
+      attentionScore * 0.25 +
+      communicationScore * 0.2
+  )
 }
 
-function getRouteLabel(route: CareerRoute) {
-  if (route === "career_up") return "収入アップルート"
-  if (route === "balance") return "バランス重視ルート"
-  return "生活安定ルート"
-}
-
-function getReason(job: PublicJobPosting, route: CareerRoute, user: DiagnosisUser) {
+function calcDreamScore(job: MatchableJob, user: DiagnosisUser) {
   const dreamJob = getDreamJob(user)
   const personalityJob = getPersonalityJob(user)
 
-  if (job.hiring_category === dreamJob && job.hiring_category === personalityJob) {
-    return "性格面の相性と、生活・収入目標から逆算したルートの両方に近い本命案件です。まず優先して比較したい求人です。"
-  }
+  let score = 50
 
-  if (job.hiring_category === dreamJob) {
-    return `夢や生活目標から逆算したときに、${dreamJob}は収入・成長余地の面で近づきやすいルートです。今の希望を否定せず、将来の選択肢を広げる案件としておすすめです。`
-  }
+  if (textIncludes(job.hiring_category, dreamJob)) score += 28
+  if (textIncludes(job.occupation_name, dreamJob)) score += 24
+  if (textIncludes(job.job_title, dreamJob)) score += 20
 
-  if (job.hiring_category === personalityJob) {
-    return `性格診断では${personalityJob}が合いやすい結果です。まず無理なく働き始め、経験を積みながら次のステップを考える入口として相性があります。`
-  }
+  if (textIncludes(job.hiring_category, personalityJob)) score += 10
+  if (textIncludes(job.job_title, personalityJob)) score += 8
 
-  if (route === "career_up") return "将来的な収入アップやキャリア形成につながりやすいルートです。目標に近づくための挑戦案件としておすすめです。"
-  if (route === "balance") return "働きやすさや対人面のバランスを取りやすいルートです。経験条件が合えば、長く安定して働きやすい可能性があります。"
-  if (user.experience === "未経験" && job.accepts_inexperienced) return "未経験から始めやすく、まず安定収入を作る入口として現実的なルートです。生活基盤を整えながら次の選択肢を広げられます。"
-  return "安定した働き方を作りやすく、生活基盤を整えやすいルートです。"
+  const growth = toLevel(job.growth)
+  const route = normalizeRoute(job.route)
+
+  if (growth >= 4) score += 10
+  if (route === "career_up") score += 8
+
+  return clamp(score)
 }
 
-function getPositionLabel(job: PublicJobPosting, user: DiagnosisUser) {
+function calcRegionScore(job: MatchableJob, user: DiagnosisUser) {
+  const region = user.region || "全国どこでもOK"
+
+  if (region === "全国どこでもOK" || region === "未定") return 100
+  if (job.prefecture?.includes(region)) return 100
+  if (job.city?.includes(region)) return 90
+  if (region === "地方" && job.prefecture && !["東京", "大阪", "名古屋", "福岡"].some((x) => job.prefecture?.includes(x))) {
+    return 85
+  }
+
+  return 65
+}
+
+function calcDifficultyScore(job: MatchableJob, user: DiagnosisUser) {
+  const difficulty = toLevel(job.difficulty)
+  const exp = user.experience || "未経験"
+
+  if (exp === "未経験") {
+    if (difficulty >= 5) return 45
+    if (difficulty === 4) return 60
+    if (difficulty === 3) return 80
+    return 95
+  }
+
+  if (exp === "1年未満") {
+    if (difficulty >= 5) return 60
+    if (difficulty === 4) return 75
+    return 90
+  }
+
+  if (exp === "1〜3年") {
+    if (difficulty >= 5) return 78
+    return 92
+  }
+
+  return 95
+}
+
+function calcTotalScore(job: MatchableJob, user: DiagnosisUser) {
+  const personalityScore = calcPersonalityScore(job, user)
+  const dreamScore = calcDreamScore(job, user)
+  const regionScore = calcRegionScore(job, user)
+  const difficultyScore = calcDifficultyScore(job, user)
+
+  const growthBonus = toLevel(job.growth) >= 4 ? 4 : 0
+  const inexperiencedBonus = job.accepts_inexperienced && user.experience === "未経験" ? 4 : 0
+
+  const total =
+    personalityScore * 0.38 +
+    dreamScore * 0.32 +
+    regionScore * 0.15 +
+    difficultyScore * 0.15 +
+    growthBonus +
+    inexperiencedBonus
+
+  return clamp(Math.round(total), 1, 99)
+}
+
+function getStrongPoint(job: MatchableJob) {
+  const values = [
+    { label: "コツコツ続ける力", value: toLevel(job.routine_level) },
+    { label: "変化に対応する力", value: toLevel(job.change_level) },
+    { label: "正確に進める力", value: toLevel(job.attention_level) },
+    { label: "人と調整する力", value: toLevel(job.communication_level) },
+  ]
+
+  return values.sort((a, b) => b.value - a.value)[0]?.label ?? "強み"
+}
+
+function createReason(job: MatchableJob, user: DiagnosisUser, matchPercent: number) {
   const dreamJob = getDreamJob(user)
   const personalityJob = getPersonalityJob(user)
+  const route = normalizeRoute(job.route)
+  const strongPoint = getStrongPoint(job)
+  const growth = toLevel(job.growth)
+  const difficulty = toLevel(job.difficulty)
 
-  if (job.hiring_category === dreamJob && job.hiring_category === personalityJob) return "本命おすすめ案件"
-  if (job.hiring_category === dreamJob) return "夢に近づく本命案件"
-  if (job.hiring_category === personalityJob) return "性格診断に近い案件"
-  if (user.experience === "未経験" && job.accepts_inexperienced) return "今すぐ挑戦しやすい案件"
-  return "将来的に検討したい案件"
+  const routeText =
+    route === "stable"
+      ? "まず生活基盤を安定させやすいルートです。"
+      : route === "career_up"
+        ? "将来的な収入アップを狙いやすいルートです。"
+        : "働きやすさと成長のバランスを取りやすいルートです。"
+
+  const dreamText =
+    textIncludes(job.hiring_category, dreamJob) ||
+    textIncludes(job.occupation_name, dreamJob) ||
+    textIncludes(job.job_title, dreamJob)
+      ? `夢を叶えるためのおすすめ業種「${dreamJob}」に近い案件です。`
+      : `性格的に合いやすい「${personalityJob}」から、将来の目標に近づくための比較候補です。`
+
+  const growthText =
+    growth >= 4
+      ? "成長余地が高く、経験や資格によって年収を伸ばしやすい点も評価しています。"
+      : "大きなジャンプよりも、無理なく積み上げる働き方に向いています。"
+
+  const difficultyText =
+    difficulty >= 4 && user.experience === "未経験"
+      ? "ただし難易度はやや高めなので、最初は学習・資格・現場経験のサポートが重要です。"
+      : "現在の経験値から見ても、挑戦しやすい範囲にあります。"
+
+  return `${dreamText}
+${routeText}
+この案件は特に「${strongPoint}」を活かしやすく、総合マッチ度は${matchPercent}%です。
+${growthText}
+${difficultyText}`
 }
 
-function calculateMatchScore(job: PublicJobPosting, user: DiagnosisUser) {
-  let score = 0
+function getPositionLabel(job: MatchableJob, isDreamPick: boolean) {
+  if (isDreamPick) return "夢に近づく本命候補"
+
+  const route = normalizeRoute(job.route)
+  if (route === "stable") return "今すぐ安定候補"
+  if (route === "career_up") return "収入アップ候補"
+  return "バランス候補"
+}
+
+function isDreamPickJob(job: MatchableJob, user: DiagnosisUser) {
   const dreamJob = getDreamJob(user)
-  const personalityJob = getPersonalityJob(user)
+  if (dreamJob === "未定") return false
 
-  const continuityTarget = (job.fit_continuity_min ?? 0) * 20
-  const changeTarget = (job.fit_change_adapt_min ?? 0) * 20
-  const attentionTarget = (job.fit_attention_min ?? 0) * 20
-  const communicationTarget = (job.fit_communication_min ?? 0) * 20
-
-  score += Math.max(0, 100 - Math.abs(user.continuity - continuityTarget))
-  score += Math.max(0, 100 - Math.abs(user.change - changeTarget))
-  score += Math.max(0, 100 - Math.abs(user.attention - attentionTarget))
-  score += Math.max(0, 100 - Math.abs(user.communication - communicationTarget))
-
-  if (job.hiring_category === dreamJob) score += 160
-  if (job.hiring_category === personalityJob) score += 70
-  if (user.experience === "未経験" && job.accepts_inexperienced) score += 45
-  if (user.experience !== "未経験" && job.minimum_experience_years !== null) score += 20
-
-  if (user.region === "東京" && job.prefecture === "東京都") score += 40
-  if (user.region === "大阪" && job.prefecture === "大阪府") score += 40
-  if (user.region === "名古屋" && job.prefecture === "愛知県") score += 40
-  if (user.region === "福岡" && job.prefecture === "福岡県") score += 40
-  if (user.region === "全国どこでもOK") score += 25
-
-  if (job.estimated_monthly_income_max && job.estimated_monthly_income_max >= 280000) score += 25
-  if (job.estimated_monthly_income_max && job.estimated_monthly_income_max >= 330000) score += 25
-
-  return score
+  return (
+    textIncludes(job.hiring_category, dreamJob) ||
+    textIncludes(job.occupation_name, dreamJob) ||
+    textIncludes(job.job_title, dreamJob)
+  )
 }
 
-export function getRecommendedJobs(jobs: PublicJobPosting[], user: DiagnosisUser): RecommendedJob[] {
+export function getRecommendedJobs(
+  jobs: PublicJobPosting[],
+  user: DiagnosisUser
+): RecommendedJob[] {
   return jobs
-    .map((job) => {
-      const route = getRoute(job)
-      const rawScore = calculateMatchScore(job, user)
-      const matchPercent = Math.min(99, Math.max(50, Math.round(rawScore / 6)))
-      const isDreamPick = job.hiring_category === getDreamJob(user)
-      const isPersonalityPick = job.hiring_category === getPersonalityJob(user)
+    .map((rawJob) => {
+      const job = rawJob as MatchableJob
+      const route = normalizeRoute(job.route)
+      const isDreamPick = isDreamPickJob(job, user)
+      const matchPercent = calcTotalScore(job, user)
 
       return {
-        ...job,
-        matchScore: rawScore,
-        matchPercent,
+        ...rawJob,
         route,
-        routeLabel: getRouteLabel(route),
-        reason: getReason(job, route, user),
-        positionLabel: getPositionLabel(job, user),
+        matchPercent,
         isDreamPick,
-        isPersonalityPick,
-      }
+        positionLabel: getPositionLabel(job, isDreamPick),
+        reason: createReason(job, user, matchPercent),
+      } as RecommendedJob
     })
     .sort((a, b) => {
       if (a.isDreamPick !== b.isDreamPick) return a.isDreamPick ? -1 : 1
-      return b.matchScore - a.matchScore
+      return b.matchPercent - a.matchPercent
     })
 }
