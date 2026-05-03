@@ -268,68 +268,131 @@ export default function ChatUI() {
 
 
   useEffect(() => {
-    if (!result || !isComplete) return
+  if (!result || !isComplete) return
 
-    const completedAnswers = answers as Answers
-    const requestKey = JSON.stringify({
-      reason: freeAnswers.reason ?? '',
-      strength: freeAnswers.strength ?? '',
-      recommendedJob: result.dreamRecommendedJob,
-      personalityRecommendedJob: result.personalityRecommendedJob,
-      dreamRecommendedJob: result.dreamRecommendedJob,
-      achievementRate: result.achievementRate,
-      score: result.psychologyScore,
-    })
+  const completedAnswers = answers as Answers
 
-    if (aiCommentRequestKeyRef.current === requestKey) return
-    aiCommentRequestKeyRef.current = requestKey
+  const topJob =
+    jobs.find((job) => job.job_name === result.dreamRecommendedJob) ??
+    jobs.find((job) => job.job_name === result.personalityRecommendedJob) ??
+    jobs[0]
 
-    const fetchAiComment = async () => {
-      setAiCommentLoading(true)
-      setAiCommentError('')
+  const requestKey = JSON.stringify({
+    reason: freeAnswers.reason ?? '',
+    strength: freeAnswers.strength ?? '',
+    recommendedJob: result.dreamRecommendedJob,
+    personalityRecommendedJob: result.personalityRecommendedJob,
+    achievementRate: result.achievementRate,
+    income: result.estimatedAnnualIncome,
+    targetIncome: result.requiredAnnualIncome,
+    score: result.psychologyScore,
+    topJob: topJob?.job_name ?? '',
+  })
 
-      try {
-        const res = await fetch('/api/ai-comment', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+  if (aiCommentRequestKeyRef.current === requestKey) return
+  aiCommentRequestKeyRef.current = requestKey
+
+  const fetchAiComment = async () => {
+    setAiCommentLoading(true)
+    setAiCommentError('')
+
+    try {
+      const incomeGap =
+        result.requiredAnnualIncome - result.estimatedAnnualIncome
+
+      const res = await fetch('/api/ai-comment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          // 既存 route.ts 互換
+          reason: freeAnswers.reason ?? '',
+          strength: freeAnswers.strength ?? '',
+          answers: completedAnswers,
+
+          // AIに渡す強化データ
+          user: {
+            continuity: result.psychologyScore.a,
+            change: result.psychologyScore.b,
+            attention: result.psychologyScore.c,
+            communication: result.psychologyScore.d,
+            experience: completedAnswers.exp,
+            region: completedAnswers.region,
+            age: completedAnswers.age,
+            purpose: completedAnswers.purpose,
+            life: completedAnswers.life,
+            money: completedAnswers.money,
+            years: completedAnswers.years,
+            personalityJob: result.personalityRecommendedJob,
+            dreamJob: result.dreamRecommendedJob,
             reason: freeAnswers.reason ?? '',
             strength: freeAnswers.strength ?? '',
-            result: {
-              recommendedJob: result.dreamRecommendedJob,
-              personalityRecommendedJob: result.personalityRecommendedJob,
-              dreamRecommendedJob: result.dreamRecommendedJob,
-              recommendationGap: result.recommendationGap,
-              recommendationMessage: result.recommendationMessage,
-              personalityReason: result.personalityReason,
-              dreamReason: result.dreamReason,
-              judgement: result.judgement,
-              achievementRate: result.achievementRate,
-              psychologyTypeSummary: result.psychologyTypeSummary,
-              bottleneck: result.bottleneck,
-              actionPlan: result.actionPlan,
-              psychologyScore: result.psychologyScore,
+          },
+
+          result: {
+            recommendedJob: result.dreamRecommendedJob,
+            personalityRecommendedJob: result.personalityRecommendedJob,
+            dreamRecommendedJob: result.dreamRecommendedJob,
+            matchPercent: result.achievementRate,
+            achievementRate: result.achievementRate,
+            currentIncome: result.estimatedAnnualIncome,
+            targetIncome: result.requiredAnnualIncome,
+            incomeGap,
+            gap: result.recommendationGap,
+            judgement: result.judgement,
+            bottleneck: result.bottleneck,
+            actionPlan: result.actionPlan,
+            psychologyTypeSummary: result.psychologyTypeSummary,
+            careerRouteType: result.careerRouteType,
+            psychologyScore: result.psychologyScore,
+          },
+
+          topJob: {
+            title: topJob?.job_name ?? result.dreamRecommendedJob,
+            category: topJob?.job_name ?? result.dreamRecommendedJob,
+            baseSalary: topJob?.base_salary ?? null,
+            bonus: topJob?.bonus ?? null,
+            raiseRate: topJob?.raise_rate ?? null,
+            routineLevel: topJob?.routine_level ?? null,
+            teamworkLevel: topJob?.teamwork_level ?? null,
+            stressLevel: topJob?.stress_level ?? null,
+            route: result.actionPlan,
+          },
+
+          analysis: {
+            incomeGap,
+            riskFlags: {
+              lowChange: result.psychologyScore.b < 40,
+              lowCommunication: result.psychologyScore.d < 40,
+              lowAttention: result.psychologyScore.c < 40,
             },
-            answers: completedAnswers,
-          }),
-        })
+            type:
+              result.psychologyScore.a >= 70 && result.psychologyScore.b < 50
+                ? '積み上げ型'
+                : result.psychologyScore.b >= 70
+                ? '変化適応型'
+                : 'バランス型',
+          },
+        }),
+      })
 
-        if (!res.ok) throw new Error('AIコメントの取得に失敗しました')
+      if (!res.ok) throw new Error('AIコメントの取得に失敗しました')
 
-        const data = await res.json()
-        if (data?.comment) {
-          setAiComment(data.comment as AiComment)
-        }
-      } catch (error) {
-        console.error(error)
-        setAiCommentError('AIコメントを取得できませんでした。診断結果はこのまま確認できます。')
-      } finally {
-        setAiCommentLoading(false)
+      const data = await res.json()
+      if (data?.comment) {
+        setAiComment(data.comment as AiComment)
       }
+    } catch (error) {
+      console.error(error)
+      setAiCommentError(
+        'AIコメントを取得できませんでした。診断結果はこのまま確認できます。'
+      )
+    } finally {
+      setAiCommentLoading(false)
     }
+  }
 
-    fetchAiComment()
-  }, [result, isComplete, answers, freeAnswers])
+  fetchAiComment()
+}, [result, isComplete, answers, freeAnswers, jobs])
 
   const goNextWithBotMessage = (nextBotText: string) => {
     setIsTyping(true)
