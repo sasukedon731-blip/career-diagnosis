@@ -93,19 +93,19 @@ const steps: Step[] = [
   {
     type: 'choice',
     key: 'exp',
-    question: 'これまでの仕事経験はどれに近いですか？',
+    question: '仕事・アルバイト・学校活動などを含めて、これまでの経験はどれに近いですか？',
     options: ['未経験', '1年未満', '1〜3年', '3年以上'],
   },
   {
     type: 'text',
     key: 'strength',
-    question: '今までの経験の中で、自分に向いていると感じたことはありますか？',
-    placeholder: '例：コツコツ続けること、トラブル対応 など',
+    question: '仕事・学校・生活・アルバイトなどで、自分に向いていると感じたことはありますか？',
+    placeholder: '例：コツコツ続けること、人の話を聞くこと、整理整頓 など',
   },
   {
     type: 'choice',
     key: 'level',
-    question: '今までの仕事はどちらに近いですか？',
+    question: '作業や課題を進めるとき、どちらに近いですか？',
     options: ['指示通り', '自分で判断', '管理・指導'],
   },
   {
@@ -216,7 +216,15 @@ export default function ChatUI() {
   const [aiCommentError, setAiCommentError] = useState('')
 
   const bottomRef = useRef<HTMLDivElement | null>(null)
+  const resultSectionRef = useRef<HTMLElement | null>(null)
   const aiCommentRequestKeyRef = useRef('')
+
+  const isComplete = stepIndex >= steps.length
+
+  const result = useMemo(() => {
+    if (!isComplete) return null
+    return runDiagnosis(answers as Answers, jobs, regions, psychologyAnswers)
+  }, [answers, jobs, regions, psychologyAnswers, isComplete])
 
   useEffect(() => {
     const fetchMasterData = async () => {
@@ -234,15 +242,21 @@ export default function ChatUI() {
   }, [])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, stepIndex, saveMessage, isTyping, aiComment, aiCommentLoading])
+    if (!isComplete) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, stepIndex, saveMessage, isTyping, isComplete])
 
-  const isComplete = stepIndex >= steps.length
-
-  const result = useMemo(() => {
-    if (!isComplete) return null
-    return runDiagnosis(answers as Answers, jobs, regions, psychologyAnswers)
-  }, [answers, jobs, regions, psychologyAnswers, isComplete])
+  useEffect(() => {
+    if (isComplete && result) {
+      window.setTimeout(() => {
+        resultSectionRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        })
+      }, 150)
+    }
+  }, [isComplete, result])
 
   useEffect(() => {
     if (!result) return
@@ -626,6 +640,7 @@ export default function ChatUI() {
 
           {isComplete && result && (
             <section
+              ref={resultSectionRef}
               style={{
                 marginTop: 18,
                 background: '#fff',
@@ -633,8 +648,25 @@ export default function ChatUI() {
                 padding: 18,
               }}
             >
-              <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>
-                診断結果
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginBottom: 10,
+                  padding: '6px 10px',
+                  borderRadius: 999,
+                  background: '#dcfce7',
+                  color: '#166534',
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                ここから診断結果です
+              </div>
+
+              <h2 style={{ fontSize: 26, fontWeight: 900, marginBottom: 12 }}>
+                あなたのキャリア診断結果
               </h2>
 
               <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>
